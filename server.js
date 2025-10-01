@@ -13,32 +13,26 @@ if (!PERSONAL_ACCESS_TOKEN || !PORTFOLIO_ID) {
     process.exit(1);
 }
 
+// Initialize Asana client
 const client = asana.Client.create().useAccessToken(PERSONAL_ACCESS_TOKEN);
 
-const SEGMENT_COLORS = {
-    'A': '#b6d7a8',
-    'B': '#9fc5e8',
-    'C': '#fff2cc',
-    'D': '#f9cb9c',
-    'Red Flag': '#ea9999'
-};
-
+// Fetch tasks for portfolio members
 async function fetchClientsMissingContacts() {
     try {
-        const portfolio = await client.portfolios.getPortfolio(PORTFOLIO_ID, { opt_fields: 'name,members' });
-        const members = portfolio.members || [];
+        const portfolio = await client.portfolios.findById(PORTFOLIO_ID);
+        const members = portfolio.data.members || [];
         if (!members.length) return [];
 
         let missingContacts = [];
 
         for (const member of members) {
-            const tasks = await client.tasks.findAll({ assignee: member.gid, opt_fields: 'name,custom_fields' });
-            for await (const task of tasks) {
+            const tasks = await client.tasks.findByAssignee(member.gid);
+            for (const task of tasks.data) {
                 let segmentation = 'Unknown';
                 let email = '';
                 let phone = '';
 
-                task.custom_fields.forEach(field => {
+                (task.custom_fields || []).forEach(field => {
                     if (field.name === 'Lead Client Segmentation') segmentation = field.display_value || 'Unknown';
                     if (field.name === 'HOH Email') email = field.display_value || '';
                     if (field.name === 'Phone Number') phone = field.display_value || '';
@@ -64,6 +58,7 @@ async function fetchClientsMissingContacts() {
     }
 }
 
+// Generate PDF
 function generatePDF(clients, res) {
     const doc = new PDFDocument({ margin: 30, size: 'A4' });
 
@@ -84,7 +79,7 @@ function generatePDF(clients, res) {
     doc.text('Missing', 400, y);
     y += rowHeight;
 
-    clients.forEach((client, index) => {
+    clients.forEach(client => {
         const color = SEGMENT_COLORS[client.segmentation] || '#cccccc';
         doc.rect(50, y - 5, 500, rowHeight).fillOpacity(0.2).fill(color).fillColor('black');
 
@@ -97,6 +92,7 @@ function generatePDF(clients, res) {
     doc.end();
 }
 
+// Endpoint
 app.get('/generatePDF', async (req, res) => {
     const clients = await fetchClientsMissingContacts();
     if (!clients.length) return res.send('No clients missing phone or email found.');
