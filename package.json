@@ -1,19 +1,17 @@
 {
-  "dependencies": {
-    "asana": "^3.1.2",
-    "axios": "^1.12.2",
-    "express": "^5.1.0",
-    "pdfkit": "^0.17.2"
-  },
-  "name": "phoneemailbutton",
+  "name": "phone-email-pdf",
   "version": "1.0.0",
-  "description": "",
-  "main": "generateMissingContacts.js",
+  "description": "Generates a PDF of clients missing phone or email in Asana",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "asana": "^0.27.0",
+    "pdfkit": "^0.13.0"
+  }
 }

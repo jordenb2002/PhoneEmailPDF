@@ -1,40 +1,38 @@
 const express = require('express');
 const PDFDocument = require('pdfkit');
-const fs = require('fs');
 const asana = require('asana');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Use environment variables
 const PERSONAL_ACCESS_TOKEN = process.env.ASANA_PAT;
 const PORTFOLIO_ID = process.env.PORTFOLIO_ID;
 
+if (!PERSONAL_ACCESS_TOKEN || !PORTFOLIO_ID) {
+    console.error("Missing environment variables: ASANA_PAT or PORTFOLIO_ID");
+    process.exit(1);
+}
+
 const client = asana.Client.create().useAccessToken(PERSONAL_ACCESS_TOKEN);
 
-// Segmentation colors
 const SEGMENT_COLORS = {
-    'A': '#b6d7a8',         // light green
-    'B': '#9fc5e8',         // light blue
-    'C': '#fff2cc',         // light yellow
-    'D': '#f9cb9c',         // light orange
-    'Red Flag': '#ea9999'   // light red
+    'A': '#b6d7a8',
+    'B': '#9fc5e8',
+    'C': '#fff2cc',
+    'D': '#f9cb9c',
+    'Red Flag': '#ea9999'
 };
 
 async function fetchClientsMissingContacts() {
     try {
-        // Get all tasks in the portfolio
         const portfolio = await client.portfolios.getPortfolio(PORTFOLIO_ID, { opt_fields: 'name,members' });
-        
         const members = portfolio.members || [];
         if (!members.length) return [];
 
-        // Fetch tasks/clients for each member
         let missingContacts = [];
 
         for (const member of members) {
             const tasks = await client.tasks.findAll({ assignee: member.gid, opt_fields: 'name,custom_fields' });
-            
             for await (const task of tasks) {
                 let segmentation = 'Unknown';
                 let email = '';
@@ -56,7 +54,6 @@ async function fetchClientsMissingContacts() {
             }
         }
 
-        // Sort by segmentation
         const order = ['A','B','C','D','Red Flag','Unknown'];
         missingContacts.sort((a,b) => order.indexOf(a.segmentation) - order.indexOf(b.segmentation));
 
@@ -69,8 +66,7 @@ async function fetchClientsMissingContacts() {
 
 function generatePDF(clients, res) {
     const doc = new PDFDocument({ margin: 30, size: 'A4' });
-    
-    // Pipe PDF to response
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename=missing_clients.pdf');
     doc.pipe(res);
@@ -82,15 +78,13 @@ function generatePDF(clients, res) {
     const rowHeight = 25;
     let y = tableTop;
 
-    // Table headers
     doc.fontSize(12).fillColor('black');
     doc.text('Name', 50, y);
     doc.text('Segmentation', 250, y);
     doc.text('Missing', 400, y);
     y += rowHeight;
 
-    clients.forEach(client => {
-        // Background color for segmentation
+    clients.forEach((client, index) => {
         const color = SEGMENT_COLORS[client.segmentation] || '#cccccc';
         doc.rect(50, y - 5, 500, rowHeight).fillOpacity(0.2).fill(color).fillColor('black');
 
@@ -105,9 +99,7 @@ function generatePDF(clients, res) {
 
 app.get('/generatePDF', async (req, res) => {
     const clients = await fetchClientsMissingContacts();
-    if (!clients.length) {
-        return res.send('No clients missing phone or email found.');
-    }
+    if (!clients.length) return res.send('No clients missing phone or email found.');
     generatePDF(clients, res);
 });
 
