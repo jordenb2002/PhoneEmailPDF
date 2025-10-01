@@ -1,0 +1,19 @@
+{
+  "dependencies": {
+    "asana": "^3.1.2",
+    "axios": "^1.12.2",
+    "express": "^5.1.0",
+    "pdfkit": "^0.17.2"
+  },
+  "name": "phoneemailbutton",
+  "version": "1.0.0",
+  "description": "",
+  "main": "generateMissingContacts.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
