@@ -1,130 +1,116 @@
-// server.js
 const express = require('express');
 const PDFDocument = require('pdfkit');
-const axios = require('axios');
+const fs = require('fs');
+const asana = require('asana');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// === CONFIG ===
-const PERSONAL_ACCESS_TOKEN = '2/1211321500866440/1211524227973276:8259aa176edd98252c097aac13198dd9';
-const PORTFOLIO_ID = '1211037518855167';
+// Use environment variables
+const PERSONAL_ACCESS_TOKEN = process.env.ASANA_PAT;
+const PORTFOLIO_ID = process.env.PORTFOLIO_ID;
 
-// Helper to fetch all projects in portfolio
-async function fetchProjects() {
-  const response = await axios.get(`https://app.asana.com/api/1.0/portfolios/${PORTFOLIO_ID}/projects`, {
-    headers: { Authorization: `Bearer ${PERSONAL_ACCESS_TOKEN}` }
-  });
-  return response.data.data; // array of projects
-}
+const client = asana.Client.create().useAccessToken(PERSONAL_ACCESS_TOKEN);
 
-// Helper to fetch tasks in a project
-async function fetchTasks(projectId) {
-  const response = await axios.get(`https://app.asana.com/api/1.0/projects/${projectId}/tasks`, {
-    headers: { Authorization: `Bearer ${PERSONAL_ACCESS_TOKEN}` },
-    params: { opt_fields: 'name,custom_fields' }
-  });
-  return response.data.data; // array of tasks
-}
+// Segmentation colors
+const SEGMENT_COLORS = {
+    'A': '#b6d7a8',         // light green
+    'B': '#9fc5e8',         // light blue
+    'C': '#fff2cc',         // light yellow
+    'D': '#f9cb9c',         // light orange
+    'Red Flag': '#ea9999'   // light red
+};
 
-// Helper to get client info from a task
-function extractClientInfo(task) {
-  const cf = task.custom_fields || [];
-  const segmentation = cf.find(f => f.name === 'Lead Client Segmentation')?.text_value || 'Unknown';
-  const phone = cf.find(f => f.name === 'Phone Number')?.text_value || '';
-  const email = cf.find(f => f.name === 'HOH Email')?.text_value || '';
-  return {
-    name: task.name,
-    segmentation,
-    phone,
-    email
-  };
-}
+async function fetchClientsMissingContacts() {
+    try {
+        // Get all tasks in the portfolio
+        const portfolio = await client.portfolios.getPortfolio(PORTFOLIO_ID, { opt_fields: 'name,members' });
+        
+        const members = portfolio.members || [];
+        if (!members.length) return [];
 
-// === Endpoint to generate PDF ===
-app.get('/generatePDF', async (req, res) => {
-  try {
-    const projects = await fetchProjects();
-    let clients = [];
+        // Fetch tasks/clients for each member
+        let missingContacts = [];
 
-    for (const project of projects) {
-      const tasks = await fetchTasks(project.gid);
-      const clientData = tasks.map(extractClientInfo);
-      clients = clients.concat(clientData);
+        for (const member of members) {
+            const tasks = await client.tasks.findAll({ assignee: member.gid, opt_fields: 'name,custom_fields' });
+            
+            for await (const task of tasks) {
+                let segmentation = 'Unknown';
+                let email = '';
+                let phone = '';
+
+                task.custom_fields.forEach(field => {
+                    if (field.name === 'Lead Client Segmentation') segmentation = field.display_value || 'Unknown';
+                    if (field.name === 'HOH Email') email = field.display_value || '';
+                    if (field.name === 'Phone Number') phone = field.display_value || '';
+                });
+
+                if (!email || !phone) {
+                    missingContacts.push({
+                        name: task.name,
+                        segmentation,
+                        missing: `${!phone ? 'Phone ' : ''}${!email ? 'Email' : ''}`.trim()
+                    });
+                }
+            }
+        }
+
+        // Sort by segmentation
+        const order = ['A','B','C','D','Red Flag','Unknown'];
+        missingContacts.sort((a,b) => order.indexOf(a.segmentation) - order.indexOf(b.segmentation));
+
+        return missingContacts;
+    } catch (err) {
+        console.error('Error fetching clients:', err);
+        return [];
     }
+}
 
-    // Filter missing phone/email and sort by segmentation
-    const missingClients = clients
-      .filter(c => !c.phone || !c.email)
-      .sort((a, b) => a.segmentation.localeCompare(b.segmentation));
+function generatePDF(clients, res) {
+    const doc = new PDFDocument({ margin: 30, size: 'A4' });
+    
+    // Pipe PDF to response
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename=missing_clients.pdf');
+    doc.pipe(res);
 
-    // === Generate PDF ===
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
-    let buffers = [];
-    doc.on('data', buffers.push.bind(buffers));
-    doc.on('end', () => {
-      const pdfData = Buffer.concat(buffers);
-      res.writeHead(200, {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': 'attachment; filename=MissingClients.pdf',
-        'Content-Length': pdfData.length
-      });
-      res.end(pdfData);
-    });
-
-    // Title
-    doc.fontSize(22).fillColor('#333').text('Missing Clients Report', { align: 'center' });
+    doc.fontSize(20).text('Clients Missing Contact Info', { align: 'center' });
     doc.moveDown();
 
-    // Table headers
     const tableTop = 100;
     const rowHeight = 25;
     let y = tableTop;
 
-    const headers = ['Name', 'Segmentation', 'Missing'];
-    const columnWidths = [250, 100, 150];
-    const colors = { header: '#4b8bf5', row1: '#e6f0ff', row2: '#ffffff' };
-
-    // Draw header background
-    doc.rect(50, y, columnWidths.reduce((a,b)=>a+b,0), rowHeight).fill(colors.header);
-    doc.fillColor('#ffffff').fontSize(12);
-    let x = 50;
-    headers.forEach((header, i) => {
-      doc.text(header, x + 5, y + 7, { width: columnWidths[i] - 10, align: 'left' });
-      x += columnWidths[i];
-    });
+    // Table headers
+    doc.fontSize(12).fillColor('black');
+    doc.text('Name', 50, y);
+    doc.text('Segmentation', 250, y);
+    doc.text('Missing', 400, y);
     y += rowHeight;
 
-    // Draw rows
-    missingClients.forEach((client, idx) => {
-      const fillColor = idx % 2 === 0 ? colors.row1 : colors.row2;
-      doc.rect(50, y, columnWidths.reduce((a,b)=>a+b,0), rowHeight).fill(fillColor);
-      doc.fillColor('#000000');
+    clients.forEach(client => {
+        // Background color for segmentation
+        const color = SEGMENT_COLORS[client.segmentation] || '#cccccc';
+        doc.rect(50, y - 5, 500, rowHeight).fillOpacity(0.2).fill(color).fillColor('black');
 
-      const missing = [];
-      if (!client.phone) missing.push('Phone');
-      if (!client.email) missing.push('Email');
-
-      x = 50;
-      [client.name, client.segmentation, missing.join(', ')].forEach((text, i) => {
-        doc.text(text, x + 5, y + 7, { width: columnWidths[i] - 10, align: 'left' });
-        x += columnWidths[i];
-      });
-      y += rowHeight;
-
-      // Add page if necessary
-      if (y + rowHeight > doc.page.height - 50) {
-        doc.addPage();
-        y = 50;
-      }
+        doc.text(client.name, 50, y);
+        doc.text(client.segmentation, 250, y);
+        doc.text(client.missing, 400, y);
+        y += rowHeight;
     });
 
     doc.end();
+}
 
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send('Error generating PDF');
-  }
+app.get('/generatePDF', async (req, res) => {
+    const clients = await fetchClientsMissingContacts();
+    if (!clients.length) {
+        return res.send('No clients missing phone or email found.');
+    }
+    generatePDF(clients, res);
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
