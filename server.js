@@ -1,12 +1,13 @@
 const express = require('express');
 const PDFDocument = require('pdfkit');
-const asana = require('asana');
+const { Client } = require('asana'); // Correct for Asana v3.x
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const PERSONAL_ACCESS_TOKEN = process.env.ASANA_PAT;
-const PORTFOLIO_ID = process.env.PORTFOLIO_ID;
+// ⚠️ Replace these in Render environment variables
+const PERSONAL_ACCESS_TOKEN = process.env.ASANA_PAT;  // Your Asana Personal Access Token
+const PORTFOLIO_ID = process.env.PORTFOLIO_ID;       // Your Asana Portfolio ID
 
 if (!PERSONAL_ACCESS_TOKEN || !PORTFOLIO_ID) {
     console.error("Missing environment variables: ASANA_PAT or PORTFOLIO_ID");
@@ -14,20 +15,29 @@ if (!PERSONAL_ACCESS_TOKEN || !PORTFOLIO_ID) {
 }
 
 // Initialize Asana client
-const client = asana.Client.create().useAccessToken(PERSONAL_ACCESS_TOKEN);
+const client = Client.create().useAccessToken(PERSONAL_ACCESS_TOKEN);
 
-// Fetch tasks for portfolio members
+// Colors for segments
+const SEGMENT_COLORS = {
+    'A': '#b6d7a8',
+    'B': '#9fc5e8',
+    'C': '#fff2cc',
+    'D': '#f9cb9c',
+    'Red Flag': '#ea9999'
+};
+
+// Fetch clients missing phone/email
 async function fetchClientsMissingContacts() {
     try {
-        const portfolio = await client.portfolios.findById(PORTFOLIO_ID);
-        const members = portfolio.data.members || [];
+        const portfolio = await client.portfolios.findById(PORTFOLIO_ID, { opt_fields: 'name,members' });
+        const members = portfolio.members || [];
         if (!members.length) return [];
 
         let missingContacts = [];
 
         for (const member of members) {
-            const tasks = await client.tasks.findByAssignee(member.gid);
-            for (const task of tasks.data) {
+            const tasks = await client.tasks.findByAssignee(member.gid, { opt_fields: 'name,custom_fields' });
+            for await (const task of tasks.data || []) {
                 let segmentation = 'Unknown';
                 let email = '';
                 let phone = '';
@@ -84,21 +94,4 @@ function generatePDF(clients, res) {
         doc.rect(50, y - 5, 500, rowHeight).fillOpacity(0.2).fill(color).fillColor('black');
 
         doc.text(client.name, 50, y);
-        doc.text(client.segmentation, 250, y);
-        doc.text(client.missing, 400, y);
-        y += rowHeight;
-    });
-
-    doc.end();
-}
-
-// Endpoint
-app.get('/generatePDF', async (req, res) => {
-    const clients = await fetchClientsMissingContacts();
-    if (!clients.length) return res.send('No clients missing phone or email found.');
-    generatePDF(clients, res);
-});
-
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+        doc.text(client.segmentation, 25
